@@ -47,15 +47,17 @@ def gradient_magnitude(img):
     g135 = cv2.filter2D(img, cv2.CV_64F, kernel135)
 
     # Magnitude combinada
-    mag = np.sqrt(gx**2 + gy**2 + g45**2 + g135**2)
+    mag = np.abs(gx) + np.abs(gy) + np.abs(g45) + np.abs(g135)
+
+    #mag = np.sqrt(gx**2 + gy**2 + g45**2 + g135**2)
 
     # Converte para 8 bits
     mag8 = cv2.convertScaleAbs(mag)
 
-    return mag8, gx, gy, g45, g135
+    return mag8, gx, gy
 
 def non_maximum_suppression(mag, gx, gy):
-    """Supressão de não-máximos com base no ângulo do gradiente (usando magnitude 4 direções)."""
+    """ Supressão de não-máximos com base no ângulo do gradiente (usando magnitude 4 direções)."""
     M, N = mag.shape
     Z = np.zeros((M, N), dtype=np.uint8)
 
@@ -125,13 +127,13 @@ def improved_canny(img):
     denoised = morphological_filter(img)
 
     # Passo 2: gradiente em 4 direções
-    mag, gx, gy, g45, g135 = gradient_magnitude(denoised)
+    mag, gx, gy = gradient_magnitude(denoised)
 
     # Passo 3: supressão de não-máximos
     nms = non_maximum_suppression(mag, gx, gy)
 
     # Passo 4: Otsu para definir thresholds
-    otsu_val, otsu_img = cv2.threshold(mag, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    otsu_val, otsu_img = cv2.threshold(nms, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     high = int(otsu_val)
     low = int(0.5 * otsu_val)
 
@@ -141,8 +143,8 @@ def improved_canny(img):
     return edges
 
 # Exemplo de uso
-if __name__ == "_main_":
-    img = cv2.imread("Users/home/maiara/Pictures/tomate.jpg", cv2.IMREAD_GRAYSCALE)
+if __name__ == "__main__":
+    img = cv2.imread("/home/maiara/Developer/pdi/edge-detection-morphological-canny/src/tomate.jpg", cv2.IMREAD_GRAYSCALE)
     edges = improved_canny(img)
 
     cv2.imshow("Original", img)
