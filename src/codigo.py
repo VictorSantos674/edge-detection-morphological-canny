@@ -25,7 +25,7 @@ def morphological_filter(img):
     A2 = cv2.morphologyEx(A2, cv2.MORPH_OPEN, B1)
 
     # Filtro composto
-    A3 = cv2.addWeighted(A1, 0.9, A2, 0.1, 0)
+    A3 = cv2.addWeighted(A1, 0.1, A2, 0.9, 0)
 
     return A3
 
