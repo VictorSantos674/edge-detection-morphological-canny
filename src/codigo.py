@@ -1,163 +1,143 @@
 import cv2
 import numpy as np
 
+# ETAPA 1: SUAVIZAÇÃO COM FILTRO MORFOLÓGICO CUSTOMIZADO
 def morphological_filter(img):
-    """Filtro morfológico composto com B1 e B2 definidos no artigo."""
+    """
+    Aplica um filtro morfológico composto para suavização,
+    utilizando operações de abertura e fechamento com dois kernels.
+    """
+    # B1 (cruz 3x3)
+    B1 = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
+    
+    # B2 (diamante 5x5)
+    B2 = np.array([
+        [0, 0, 1, 0, 0],
+        [0, 1, 1, 1, 0],
+        [1, 1, 1, 1, 1],
+        [0, 1, 1, 1, 0],
+        [0, 0, 1, 0, 0]
+    ], dtype=np.uint8)
 
-    # B1 (cross 3x3)
-    B1 = np.array([[0,1,0],
-                   [1,1,1],
-                   [0,1,0]], dtype=np.uint8)
-
-    # B2 (diamond 5x5)
-    B2 = np.array([[0,0,1,0,0],
-                   [0,1,1,1,0],
-                   [1,1,1,1,1],
-                   [0,1,1,1,0],
-                   [0,0,1,0,0]], dtype=np.uint8)
-
-    # Operação 1: (F ∘ B1) · B2
+    # Lógica do filtro composto
     A1 = cv2.morphologyEx(img, cv2.MORPH_OPEN, B1)
     A1 = cv2.morphologyEx(A1, cv2.MORPH_CLOSE, B2)
-
-    # Operação 2: (F · B2) ∘ B1
+    
     A2 = cv2.morphologyEx(img, cv2.MORPH_CLOSE, B2)
     A2 = cv2.morphologyEx(A2, cv2.MORPH_OPEN, B1)
+    
+    # Combinação ponderada dos resultados para a imagem final suavizada
+    smoothed_image = cv2.addWeighted(A1, 0.1, A2, 0.9, 0)
+    return smoothed_image
 
-    # Filtro composto
-    A3 = cv2.addWeighted(A1, 0.1, A2, 0.9, 0)
-
-    return A3
-
+# ETAPA 2: CÁLCULO DO GRADIENTE EM 4 DIREÇÕES
 def gradient_magnitude(img):
-    """Calcula gradiente em 4 direções: 0, 90, 45 e 135 graus."""
-    # Sobel tradicional
+    """Calcula a magnitude do gradiente e retorna os componentes para o NMS."""
     gx = cv2.Sobel(img, cv2.CV_64F, 1, 0, ksize=3)
     gy = cv2.Sobel(img, cv2.CV_64F, 0, 1, ksize=3)
-
-    # Filtros para 45° e 135°
-    kernel45 = np.array([[-2, -1, 0],
-                         [-1,  0, 1],
-                         [ 0,  1, 2]], dtype=np.float32)
-    kernel135 = np.array([[ 0, 1, 2],
-                          [-1, 0, 1],
-                          [-2,-1, 0]], dtype=np.float32)
-
+    
+    kernel45 = np.array([[-2, -1, 0], [-1,  0, 1], [ 0,  1, 2]], dtype=np.float32)
+    kernel135 = np.array([[ 0, 1, 2], [-1, 0, 1], [-2,-1, 0]], dtype=np.float32)
     g45 = cv2.filter2D(img, cv2.CV_64F, kernel45)
     g135 = cv2.filter2D(img, cv2.CV_64F, kernel135)
-
-    # Magnitude combinada
-    #mag = np.abs(gx) + np.abs(gy) + np.abs(g45) + np.abs(g135)
-
-    mag = np.sqrt(gx**2 + gy**2 + g45**2 + g135**2)
-
-    # Converte para 8 bits
-    mag8 = cv2.convertScaleAbs(mag)
-
+    
+    mag = np.abs(gx) + np.abs(gy) + np.abs(g45) + np.abs(g135)
+    mag_normalized = cv2.normalize(mag, None, 0, 255, cv2.NORM_MINMAX)
+    mag8 = np.uint8(mag_normalized)
+    
     return mag8, gx, gy
 
+# ETAPA 3: SUPRESSÃO DE NÃO-MÁXIMOS (NMS)
+import numpy as np
+
 def non_maximum_suppression(mag, gx, gy):
-    """Supressão de não-máximos com base no ângulo do gradiente (usando magnitude 4 direções)."""
+    """
+    Afina as bordas para uma largura de 1 pixel.
+    """
     M, N = mag.shape
     Z = np.zeros((M, N), dtype=np.uint8)
-
-    # Ângulo em graus
-    angle = np.arctan2(gy, gx) * 180. / np.pi
-    angle[angle < 0] += 180
-
+    
+    
+    epsilon = 1e-6 
+    
+    # Calculando o ângulo conforme a Fórmula (13): arctan(gy² / gx²)
+    # Note que np.arctan retorna radianos, então convertemos para graus.
+    angle = np.arctan( (gy**2) / (gx**2 + epsilon) ) * 180. / np.pi
+    
     for i in range(1, M-1):
         for j in range(1, N-1):
-            q = 255
-            r = 255
-
-            # direção 0° (horizontal)
-            if (0 <= angle[i,j] < 22.5) or (157.5 <= angle[i,j] <= 180):
-                q = mag[i, j+1]
-                r = mag[i, j-1]
-            # direção 45°
+            q, r = 255, 255
+            # A lógica de quantização do ângulo permanece, mas agora
+            # ela operará sobre um intervalo de ângulos limitado e menos preciso.
+            if (0 <= angle[i,j] < 22.5) or (157.5 <= angle[i,j] <= 180): # Esta segunda condição (157.5) nunca será atingida
+                q, r = mag[i, j+1], mag[i, j-1]
             elif (22.5 <= angle[i,j] < 67.5):
-                q = mag[i+1, j-1]
-                r = mag[i-1, j+1]
-            # direção 90° (vertical)
-            elif (67.5 <= angle[i,j] < 112.5):
-                q = mag[i+1, j]
-                r = mag[i-1, j]
-            # direção 135°
-            elif (112.5 <= angle[i,j] < 157.5):
-                q = mag[i-1, j-1]
-                r = mag[i+1, j+1]
+                q, r = mag[i+1, j-1], mag[i-1, j+1]
+            elif (67.5 <= angle[i,j] < 112.5): # Esta condição (acima de 90) nunca será atingida
+                q, r = mag[i+1, j], mag[i-1, j]
+            elif (112.5 <= angle[i,j] < 157.5): # Esta condição nunca será atingida
+                q, r = mag[i-1, j-1], mag[i+1, j+1]
 
-            # Mantém apenas se for máximo local
             if (mag[i,j] >= q) and (mag[i,j] >= r):
                 Z[i,j] = mag[i,j]
-            else:
-                Z[i,j] = 0
-
+                
     return Z
 
-def hysteresis(img, low, high):
-    """Duplo limiar + histerese."""
+# ETAPA 5: HISTERESE
+def canny_histerese(img, low, high):
+    """Usa duplo limiar para conectar e finalizar as bordas."""
     strong = 255
-    weak = int(low)
-
+    weak = 1 # Valor intermediário para pixels candidatos
     res = np.zeros_like(img, dtype=np.uint8)
-
+    
     strong_i, strong_j = np.where(img >= high)
-    weak_i, weak_j = np.where((img <= high) & (img >= low))
-
+    weak_i, weak_j = np.where((img < high) & (img >= low))
+    
     res[strong_i, strong_j] = strong
     res[weak_i, weak_j] = weak
-
-    # Histerese: conectar fracos aos fortes
+    
     M, N = img.shape
     for i in range(1, M-1):
         for j in range(1, N-1):
             if res[i,j] == weak:
-                if ((res[i+1, j-1] == strong) or (res[i+1, j] == strong) or (res[i+1, j+1] == strong)
-                    or (res[i, j-1] == strong) or (res[i, j+1] == strong)
-                    or (res[i-1, j-1] == strong) or (res[i-1, j] == strong) or (res[i-1, j+1] == strong)):
+                if np.any(res[i-1:i+2, j-1:j+2] == strong):
                     res[i,j] = strong
                 else:
                     res[i,j] = 0
     return res
 
-def improved_canny(img):
-    """Implementa o Canny morfologicamente melhorado."""
-    # Passo 1: filtro morfológico
-    denoised = morphological_filter(img)
-
-    # Passo 2: gradiente em 4 direções
-    mag, gx, gy = gradient_magnitude(denoised)
-
-    # Passo 3: supressão de não-máximos
-    nms = non_maximum_suppression(mag, gx, gy)
-
-    # Passo 4: Otsu para definir thresholds
-    otsu_val, otsu_img = cv2.threshold(mag, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    high = int(otsu_val)
-    low = int(0.4 * otsu_val)
-
-    # Passo 5: duplo limiar + histerese
-    edges = hysteresis(nms, low, high)
-
-    return edges
-
-
+# --- Bloco Principal de Execução ---
 if __name__ == "__main__":
-    arquivos = [
-        "tomate.jpg",
-        "img.jpg"
-    ]
+    img_path = "C:/Users/bielr/Downloads/codigoCanny/tomate.jpg"
+    original_image = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
 
-    for nome in arquivos:
-        caminho = f"/home/maiara/Developer/pdi/edge-detection-morphological-canny/src/imgs/{nome}"
-        img = cv2.imread(caminho, cv2.IMREAD_GRAYSCALE)
-        edges = improved_canny(img)
+    if original_image is None:
+        print(f"ERRO: A imagem não foi encontrada no caminho: {img_path}")
+    else:
+        # ETAPA 1: Suavização com Filtro Morfológico
+        smoothed_image = morphological_filter(original_image)
 
-        cv2.imshow(f"Original - {nome}", img)
-        cv2.imshow(f"Improved Canny - {nome}", edges)
+        # ETAPA 2: Cálculo do Gradiente
+        gradient_image, gx, gy = gradient_magnitude(smoothed_image)
+
+        # ETAPA 3: Supressão de Não-Máximos
+        nms_image = non_maximum_suppression(gradient_image, gx, gy)
+
+        # ETAPA 4: Cálculo dos Limiares com Otsu
+        otsu_high_thresh, _ = cv2.threshold(nms_image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        otsu_low_thresh = int(0.5 * otsu_high_thresh) # Limiar baixo é metade do alto
+
+        # ETAPA 5: Histerese
+        final_edges = canny_histerese(nms_image, otsu_low_thresh, otsu_high_thresh)
+
+        # --- EXIBIÇÃO DOS RESULTADOS ---
+        cv2.imshow("1 - Filtro Morfologico", smoothed_image)
+        cv2.imshow("2 - Magnitude do Gradiente", gradient_image)
+        cv2.imshow("3 - Apos Supressao de Nao-Maximos (NMS)", nms_image)
+        cv2.imshow("4 - Resultado Final com Histerese", final_edges)
+
+        print(f"Limiar Alto (Otsu) calculado: {otsu_high_thresh}")
+        print(f"Limiar Baixo (50% do Alto) usado: {otsu_low_thresh}") 
+        print("\nProcessamento concluído. Pressione qualquer tecla para sair.")
         cv2.waitKey(0)
-
-    cv2.destroyAllWindows()
-
-
+        cv2.destroyAllWindows()
