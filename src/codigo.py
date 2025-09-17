@@ -41,53 +41,42 @@ def gradient_magnitude(img):
     g45 = cv2.filter2D(img, cv2.CV_64F, kernel45)
     g135 = cv2.filter2D(img, cv2.CV_64F, kernel135)
     
-    mag = np.abs(gx) + np.abs(gy) + np.abs(g45) + np.abs(g135)
-    mag_normalized = cv2.normalize(mag, None, 0, 255, cv2.NORM_MINMAX)
-    mag8 = np.uint8(mag_normalized)
+    mag = np.sqrt(gx**2 + gy**2 + g45**2 + g135**2)
+    mag8 = cv2.convertScaleAbs(mag)
+    #mag_normalized = cv2.normalize(mag, None, 0, 255, cv2.NORM_MINMAX)
+    #mag8 = np.uint8(mag_normalized)
     
     return mag8, gx, gy
 
 # ETAPA 3: SUPRESSÃO DE NÃO-MÁXIMOS (NMS)
-import numpy as np
-
 def non_maximum_suppression(mag, gx, gy):
-    """
-    Afina as bordas para uma largura de 1 pixel.
-    """
+    """Afina as bordas espessas para uma largura de 1 pixel."""
     M, N = mag.shape
     Z = np.zeros((M, N), dtype=np.uint8)
-    
-    
-    epsilon = 1e-6 
-    
-    # Calculando o ângulo conforme a Fórmula (13): arctan(gy² / gx²)
-    # Note que np.arctan retorna radianos, então convertemos para graus.
-    angle = np.arctan( (gy**2) / (gx**2 + epsilon) ) * 180. / np.pi
+    angle = np.arctan2(gy, gx) * 180. / np.pi
+    angle[angle < 0] += 180
     
     for i in range(1, M-1):
         for j in range(1, N-1):
             q, r = 255, 255
-            # A lógica de quantização do ângulo permanece, mas agora
-            # ela operará sobre um intervalo de ângulos limitado e menos preciso.
-            if (0 <= angle[i,j] < 22.5) or (157.5 <= angle[i,j] <= 180): # Esta segunda condição (157.5) nunca será atingida
+            if (0 <= angle[i,j] < 22.5) or (157.5 <= angle[i,j] <= 180):
                 q, r = mag[i, j+1], mag[i, j-1]
             elif (22.5 <= angle[i,j] < 67.5):
                 q, r = mag[i+1, j-1], mag[i-1, j+1]
-            elif (67.5 <= angle[i,j] < 112.5): # Esta condição (acima de 90) nunca será atingida
+            elif (67.5 <= angle[i,j] < 112.5):
                 q, r = mag[i+1, j], mag[i-1, j]
-            elif (112.5 <= angle[i,j] < 157.5): # Esta condição nunca será atingida
+            elif (112.5 <= angle[i,j] < 157.5):
                 q, r = mag[i-1, j-1], mag[i+1, j+1]
 
             if (mag[i,j] >= q) and (mag[i,j] >= r):
                 Z[i,j] = mag[i,j]
-                
     return Z
 
 # ETAPA 5: HISTERESE
 def canny_histerese(img, low, high):
     """Usa duplo limiar para conectar e finalizar as bordas."""
     strong = 255
-    weak = 1 # Valor intermediário para pixels candidatos
+    weak = int(otsu_low_thresh) # Valor intermediário para pixels candidatos
     res = np.zeros_like(img, dtype=np.uint8)
     
     strong_i, strong_j = np.where(img >= high)
@@ -100,7 +89,7 @@ def canny_histerese(img, low, high):
     for i in range(1, M-1):
         for j in range(1, N-1):
             if res[i,j] == weak:
-                if np.any(res[i-1:i+2, j-1:j+2] == strong):
+                if np.any(res[i-1:i+1, j-1:j+1] == strong):
                     res[i,j] = strong
                 else:
                     res[i,j] = 0
@@ -124,8 +113,8 @@ if __name__ == "__main__":
         nms_image = non_maximum_suppression(gradient_image, gx, gy)
 
         # ETAPA 4: Cálculo dos Limiares com Otsu
-        otsu_high_thresh, _ = cv2.threshold(nms_image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        otsu_low_thresh = int(0.5 * otsu_high_thresh) # Limiar baixo é metade do alto
+        otsu_high_thresh, _ = cv2.threshold(nms_image[nms_image > 0], 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        otsu_low_thresh = int(0.5 * otsu_high_thresh)
 
         # ETAPA 5: Histerese
         final_edges = canny_histerese(nms_image, otsu_low_thresh, otsu_high_thresh)
@@ -134,10 +123,10 @@ if __name__ == "__main__":
         cv2.imshow("1 - Filtro Morfologico", smoothed_image)
         cv2.imshow("2 - Magnitude do Gradiente", gradient_image)
         cv2.imshow("3 - Apos Supressao de Nao-Maximos (NMS)", nms_image)
-        cv2.imshow("4 - Resultado Final com Histerese", final_edges)
+        cv2.imshow("5 - Resultado Final com Histerese", final_edges)
 
         print(f"Limiar Alto (Otsu) calculado: {otsu_high_thresh}")
-        print(f"Limiar Baixo (50% do Alto) usado: {otsu_low_thresh}") 
+        print(f"Limiar Baixo (50% do Alto) usado: {otsu_low_thresh}")
         print("\nProcessamento concluído. Pressione qualquer tecla para sair.")
         cv2.waitKey(0)
         cv2.destroyAllWindows()
